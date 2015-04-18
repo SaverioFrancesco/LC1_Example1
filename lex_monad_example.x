@@ -285,8 +285,8 @@ runAlex str (Alex f) = case f (startState str) of
                             Left msg -> Left msg
                             Right ( _, a ) -> Right a
 
-scanner :: String -> Either String [Token]
-scanner str = runAlex str $ loop []
+alexScanTokens :: String -> Either String [Token]
+alexScanTokens str = runAlex str $ loop []
     where
         loop acc = do tok <- alexMonadScan
                       if (tok == T_EOF)
