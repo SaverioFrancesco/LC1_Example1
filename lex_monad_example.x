@@ -50,9 +50,11 @@ $univ   = [\0-\255]        -- universal: any character
                                                                                                   in return $ Token p $ T_Int n }
   <0>   $digit+ \. $digit+ ("e" "-"? $digit+)?          { \i@S{ curr_pos = p, input_str = s} l -> let n = read (take l s)
                                                                                                   in return $ Token p $ T_Double n }
+  <0>   \' ([$univ # \'] | \\ $univ)? \'                { \i@S{ curr_pos = p, input_str = s} l -> let (_:c:ss) = s
+                                                                                                  in return $ Token p $ T_Char c }
   <0>   \" ([$univ # \"] | \\ $univ)* \"                { \i@S{ curr_pos = p, input_str = s} l -> let s' = drop 1 . take (l-1) $ s
                                                                                                   in return $ Token p $ T_String s' }
-        .                                               { skip }"
+        .                                               { skip }
 {
 
 -- Token type definition
@@ -283,7 +285,7 @@ startState str = S {
 
 
 -- runAlex :: String -> Alex a -> Either String a
-runAlex :: String -> Alex [Token] -> Either String [Token]
+-- runAlex :: String -> Alex [Token] -> Either String [Token]
 runAlex str (Alex f) = case f (startState str) of
                             Left msg -> Left msg
                             Right ( _, a ) -> Right a
@@ -291,8 +293,8 @@ runAlex str (Alex f) = case f (startState str) of
 alexScanTokens :: String -> Either String [Token]
 alexScanTokens str = runAlex str $ loop []
     where
-        loop acc = do tok <- alexMonadScan
-                      if (tok == T_EOF)
+        loop acc = do tok@(Token _ t) <- alexMonadScan
+                      if (t == T_EOF)
                       then return (reverse acc)
                       else loop (tok : acc)
 
