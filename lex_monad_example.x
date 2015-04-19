@@ -41,18 +41,18 @@ $univ   = [\0-\255]        -- universal: any character
   <0>   \/\/ .*                                         { skip }
   <0>   \/\* ([$univ # \*] | \* [$univ # \/])* \*+ \/   { skip }
   <0>   @rsyms                                          { \i@S{ curr_pos = p, input_str = s} l -> let s' = take l s
-                                                                                                  in return $ T_RSymb p s' }
+                                                                                                  in return $ Token p $ T_RSymb s' }
   <0>   @rwrds                                          { \i@S{ curr_pos = p, input_str = s} l -> let s' = take l s
-                                                                                                  in return $ T_RWrds p s' }
+                                                                                                  in return $ Token p $ T_RWrds s' }
   <0>   $lower[$lower $upper $digit '_']*               { \i@S{ curr_pos = p, input_str = s} l -> let s' = take l s
-                                                                                                  in return $ T_Ident p s' }
+                                                                                                  in return $ Token p $ T_Ident s' }
   <0>   $digit+                                         { \i@S{ curr_pos = p, input_str = s} l -> let n = read (take l s)
-                                                                                                  in return $ T_Int p n }
+                                                                                                  in return $ Token p $ T_Int n }
   <0>   $digit+ \. $digit+ ("e" "-"? $digit+)?          { \i@S{ curr_pos = p, input_str = s} l -> let n = read (take l s)
-                                                                                                  in return $ T_Double p n }
+                                                                                                  in return $ Token p $ T_Double n }
   <0>   \" ([$univ # \"] | \\ $univ)* \"                { \i@S{ curr_pos = p, input_str = s} l -> let s' = drop 1 . take (l-1) $ s
-                                                                                                  in return $ T_String p s' }
-        .                                               { skip }
+                                                                                                  in return $ Token p $ T_String s' }
+        .                                               { skip }"
 {
 
 -- Token type definition
@@ -62,14 +62,17 @@ $univ   = [\0-\255]        -- universal: any character
 -- Each of the rules in the "rule section" will return a token; you can
 -- eventually pass the token to a Happy-generated parser.
 
-data Token = T_Ident  AlexPos String
-           | T_RSymb  AlexPos String
-           | T_RWrds  AlexPos String
-           | T_Int    AlexPos Int
-           | T_Double AlexPos Double
-           | T_Char   AlexPos Char
-           | T_String AlexPos String
-           | T_EOF
+data TokenType = T_Ident  String
+               | T_RSymb  String
+               | T_RWrds  String
+               | T_Int    Int
+               | T_Double Double
+               | T_Char   Char
+               | T_String String
+               | T_EOF
+    deriving (Eq,Show,Ord)
+
+data Token = Token { pos :: AlexPos, tok :: TokenType}
     deriving (Eq,Show,Ord)
 
 -- AlexPos type definition
@@ -227,7 +230,7 @@ alexSetStartCode sc = Alex $ \s -> Right (s{ start_code = sc }, ())
 --   AlexToken: a token was matched, and the action associated with
 --              it is returned."
 
-alexEOF = return T_EOF
+alexEOF = return $ Token undefined T_EOF
 
 alexMonadScan = do
     inp <- alexGetInput
