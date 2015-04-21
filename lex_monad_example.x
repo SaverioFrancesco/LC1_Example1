@@ -30,7 +30,10 @@ $univ   = [\0-\255]        -- universal: any character
   
   -- Actions:
   -- The rule actions should have the following signature:
-  --      { ... }  :: AlexState -> Int -> Alex res
+  --      { ... }  :: AlexInput -> Int -> MyMonad res
+  -- N.B. the returned value is a statefull computation; this will give us
+  -- the ability to locally handle state changes (for example returning a do-
+  -- expression instead of a simple return statement).
 
   -- Startcodes:
   -- Alex will internally handle the startcodes, considering them with an
@@ -107,20 +110,30 @@ alexMove (Pos l c) _    = Pos  l    (c+1)
 
 -- N.B. For some reason the `monad` wrapper uses two different structures
 -- to keep track of the state informations (AlexInput and AlexState).
--- The proposed solution uses only the AlexState structure (more
+-- The proposed solution uses only the a MyState structure (more
 -- intuitive), making an alias for AlexInput (for compatibility with
 -- internal functions).
 
 type Byte = Word8
 
-type AlexInput = AlexState
-data AlexState = S {
+type AlexInput = MyState
+data MyState = S {
         curr_pos    :: !AlexPos,      -- position at current input location
         prev_char   :: !Char,         -- the character before the input
         curr_bytes  :: [Byte],       -- rest of the bytes for the current char
         input_str   :: String,        -- the current input
         start_code  :: !Int          -- the current startcode
 }
+
+-- Starting state definition
+
+startState str = S {
+                    curr_pos = startPos,
+                    input_str = str,
+                    prev_char = '\n',
+                    curr_bytes = [],
+                    start_code = 0
+                   }
 
 -- alexGetByte function definition
 -- It basically returns the next byte of the char currently been scanned.
@@ -134,11 +147,10 @@ data AlexState = S {
 -- takes a Haskell String as input, the string is automatically encoded
 -- into UTF-8 by Alex."
 
-
--- alexGetChar :: AlexState -> Maybe (Char,AlexState)
+-- alexGetChar :: AlexInput -> Maybe (Char,AlexInput)
 -- alexGetChar is renamed to alexGetByte in the generated code.
 
-alexGetByte :: AlexState -> Maybe (Byte,AlexState)
+alexGetByte :: AlexInput -> Maybe (Byte,AlexInput)
 alexGetByte i@S{ curr_bytes = (b:bs) } = Just (b, i{ curr_bytes = bs})
 alexGetByte i@S{ input_str = [] } = Nothing
 alexGetByte i@S{ curr_pos = p, input_str = (c:s) } = let p' = alexMove p c
@@ -149,13 +161,13 @@ alexGetByte i@S{ curr_pos = p, input_str = (c:s) } = let p' = alexMove p c
 -- Returns the least characted scanned. The function can return undefined
 -- if you don't use left-context patterns.
 
-alexInputPrevChar :: AlexState -> Char
+alexInputPrevChar :: AlexInput -> Char
 alexInputPrevChar S{ prev_char = c } = c
 
 -- ignorePendingBytes function definition
 -- Ignores bytes remained in the buffer after the match of a valid token.
 
-ignorePendingBytes :: AlexState -> AlexState
+ignorePendingBytes :: AlexInput -> AlexInput
 ignorePendingBytes i = i{ curr_bytes = [] }
 
 -- utf8Encode function definition
@@ -185,40 +197,41 @@ utf8Encode = map fromIntegral . go . ord
 
 -- Monad Definition
 
--- `Alex a` monad definition
+-- `MyMonad a` monad definition
 -- It's really close to the State monad definition; the Either constructor
 -- will handles errors.
 
-newtype Alex a = Alex { unAlex :: AlexState -> Either String (AlexState, a) }
+newtype MyMonad a = MyMonad { unMonad :: MyState -> Either String (MyState, a) }
 
 
--- `Alex a` Monad instancing
+-- `MyMonad a` Monad instancing
 
-instance Monad Alex where
-    return a = Alex $ \s -> Right (s,a)
-    m >>= k  = Alex $ \s -> case unAlex m s of 
+instance Monad MyMonad where
+    return a = MyMonad $ \s -> Right (s,a)
+    m >>= k  = MyMonad $ \s -> case unMonad m s of 
                                  Left msg -> Left msg
-                                 Right (s',a) -> unAlex (k a) s'
-    fail message = Alex $ \s -> Left message
+                                 Right (s',a) -> unMonad (k a) s'
+    fail message = MyMonad $ \s -> Left message
 
 -- Other useful functions
 
-alexGetInput :: Alex AlexState
-alexGetInput = Alex $ \s -> Right (s,s)
+alexGetInput :: MyMonad AlexInput
+alexGetInput = MyMonad $ \s -> Right (s,s)
 
-alexSetInput :: AlexState -> Alex ()
-alexSetInput i = Alex $ \s -> Right (i,())
+alexSetInput :: AlexInput -> MyMonad ()
+alexSetInput i = MyMonad $ \s -> Right (i,())
 
-alexGetStartCode :: Alex Int
-alexGetStartCode = Alex $ \s@S{ start_code = sc } -> Right (s, sc)
+alexGetStartCode :: MyMonad Int
+alexGetStartCode = MyMonad $ \s@S{ start_code = sc } -> Right (s, sc)
 
-alexSetStartCode :: Int -> Alex ()
-alexSetStartCode sc = Alex $ \s -> Right (s{ start_code = sc }, ())
+alexSetStartCode :: Int -> MyMonad ()
+alexSetStartCode sc = MyMonad $ \s -> Right (s{ start_code = sc }, ())
 
 
 -- alexMonadScan function definition
--- This is the main function: it operates a single step in the lexing computation
--- and will return an `Alex Token`.
+-- This is the main function: it operates a single step in the lexing computation,
+-- (consuming the input string) and will return a `MyMonad Token`
+-- (the action result in the matched rule).
 -- It internally calls the Alex defined function 'alexScan', which
 -- will scan a single token from the input stream, and return a value
 -- of type AlexReturn (see the Alex documentation for a formal
@@ -247,6 +260,15 @@ alexMonadScan = do
             alexSetInput inp'
             action (ignorePendingBytes inp) len
 
+-- runAlex function definition
+-- It will compute the final state of a MyMonad statefull computations, starting
+-- from an initial MyState.
+
+runAlex :: String -> MyMonad a -> Either String a
+runAlex str (MyMonad f) = case f (startState str) of
+                               Left msg -> Left msg
+                               Right ( _, a ) -> Right a
+
 -- ------------------------------------------------------------------------
 
 -- Useful actions (use them in the rules)
@@ -266,29 +288,17 @@ begin code = skip `andBegin` code
 -- ------------------------------------------------------------------------
 
 -- This section is only needed for a stand-alone monadic lexer.
--- N.B. If you are going to have a monadic parser, it will handle all of this.
+-- N.B. If you are going to have a monadic parser, it will handle this.
 --      You can still keep them for debugging purpose.
 
--- Starting state definition
-
-startState str = S {
-                    curr_pos = startPos,
-                    input_str = str,
-                    prev_char = '\n',
-                    curr_bytes = [],
-                    start_code = 0
-                   }
-
--- runAlex function definition
--- It will compute the final state of an Alex statefull computations, starting
--- from an initial AlexState.
-
-
--- runAlex :: String -> Alex a -> Either String a
--- runAlex :: String -> Alex [Token] -> Either String [Token]
-runAlex str (Alex f) = case f (startState str) of
-                            Left msg -> Left msg
-                            Right ( _, a ) -> Right a
+-- alexScanTokens function definition
+-- The alexScanTokens builds a simple list of Tokens from an input string.
+-- N.B. this is not the behaviour we are looking for in a (monadic) lexer/parser
+--      interaction. In fact the parser will do the lexing and parsing at the
+--      same time, avoiding the intermediate list of Tokens. In other words,
+--      Happy will ask for a new Token when needed (shift action), and,
+--      whenever possible, it will parse (reduce action) the current stack
+--      of Tokens.
 
 alexScanTokens :: String -> Either String [Token]
 alexScanTokens str = runAlex str $ loop []
