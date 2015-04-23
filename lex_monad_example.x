@@ -1,4 +1,13 @@
 
+-- This Alex file is an example of a monadic lexer. It does not use any
+-- default wrapper in order to describe the details the tool usually hides.
+--
+-- Feel free to point out any mistake in my personal comments. Please,
+-- refer to the official documentation for any further information.
+--
+-- Last Modified: 04/23/2015
+-- by Federico Igne
+
 {
 
 module Lexer where
@@ -203,6 +212,8 @@ utf8Encode = map fromIntegral . go . ord
 
 newtype MyMonad a = MyMonad { unMonad :: MyState -> Either String (MyState, a) }
 
+--  newtype MyMonadT m a = MyMonad { runMyMonad :: StateT MyState (EitherT String m) a }
+
 
 -- `MyMonad a` Monad instancing
 
@@ -252,7 +263,7 @@ alexMonadScan = do
     sc <- alexGetStartCode
     case alexScan inp sc of
         AlexEOF -> alexEOF
-        AlexError S{ curr_pos = Pos l c } -> fail $ "lexical error at line " ++ (show l) ++ ", column " ++ (show c)
+        AlexError S{ curr_pos = Pos l c } -> fail $ "lexical error at" ++  "line " ++ (show l) ++ ", column " ++ (show c)
         AlexSkip  inp' len -> do
             alexSetInput inp'
             alexMonadScan
@@ -260,12 +271,12 @@ alexMonadScan = do
             alexSetInput inp'
             action (ignorePendingBytes inp) len
 
--- runAlex function definition
+-- run function definition
 -- It will compute the final state of a MyMonad statefull computations, starting
 -- from an initial MyState.
 
-runAlex :: String -> MyMonad a -> Either String a
-runAlex str (MyMonad f) = case f (startState str) of
+run :: String -> MyMonad a -> Either String a
+run str (MyMonad f) = case f (startState str) of
                                Left msg -> Left msg
                                Right ( _, a ) -> Right a
 
@@ -301,7 +312,7 @@ begin code = skip `andBegin` code
 --      of Tokens.
 
 alexScanTokens :: String -> Either String [Token]
-alexScanTokens str = runAlex str $ loop []
+alexScanTokens str = run str $ loop []
     where
         loop acc = do tok@(Token _ t) <- alexMonadScan
                       if (t == T_EOF)
